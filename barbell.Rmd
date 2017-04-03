@@ -1,0 +1,44 @@
+---
+title: "Predicting barbell lifts class with activity data"
+author: "Sheng Feng"
+date: "4/2/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+library(ggplot2)
+library(data.table)
+library(dplyr)
+library(caret)
+library(lubridate)
+```
+
+## Introduction
+
+## Preparing Data
+```{r read.dat}
+dat <- read.table("pml-training.csv", sep = ',', header = T)
+```
+```{r change.classes}
+features <-  c(8:159)
+dat <- dat %>% mutate_each(funs(as.numeric), features) %>%
+        mutate_at(vars(cvtd_timestamp), funs(dmy_hm))
+
+```
+
+## Splitting training data for validation
+We plan to split the data by 60%/20%/20% for training, testing, and validation purpose. In order to do that,  here we set aside 20% data for final validation, and during the training we do 4 fold cross validation. 
+```{r split.data}
+set.seed(4869)
+inTrain <-  createDataPartition(dat$classe, p = 0.8)[[1]]
+training <- dat[inTrain,]
+testing <- dat[-inTrain,]
+```
+
+```{r preprocessing}
+preObj <- preProcess(training[features], method = c("center", "scale","knnImpute"))
+```
+
+
