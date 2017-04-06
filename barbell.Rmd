@@ -15,30 +15,106 @@ library(caret)
 library(lubridate)
 ```
 
-## Introduction
+## Overview
+
+In this work, the author uses various machine learning techniques to perform prediction on quality of barbell lifts from sensor data collected by fit devices. The data of this project comes from the  [HAR](http://groupware.les.inf.puc-rio.br/har) project. 
+
+The training data contains 19622 observations of 160 variables, and the goal is to predict the `classe` variable, which is a factor or 5 levels, labeled `A`~`E`. We can treat this as a multi-class classification problem.
+
 
 ## Preparing Data
+We read the training data, and select the variables that are from the sensors. We drop some features such as experiment time, and subject name, as they should not influence our results.
+
 ```{r read.dat}
 dat <- read.table("pml-training.csv", sep = ',', header = T)
 ```
+
+We drop some features such as experiment time, and subject name, as they should not influence our results.
 ```{r change.classes}
 features <-  c(8:159)
 dat <- dat %>% mutate_each(funs(as.numeric), features) %>%
-        mutate_at(vars(cvtd_timestamp), funs(dmy_hm))
-
+        select(c(features,classe))
 ```
 
-## Splitting training data for validation
-We plan to split the data by 60%/20%/20% for training, testing, and validation purpose. In order to do that,  here we set aside 20% data for final validation, and during the training we do 4 fold cross validation. 
+## Splitting data 
+We plan to split the data by 60%/20%/20% for training, individual model testing/stacking, and validation . This is to make sure that we do not over fit the training data, or underestimate the out-of-sample error.
 ```{r split.data}
 set.seed(4869)
 inTrain <-  createDataPartition(dat$classe, p = 0.8)[[1]]
 training <- dat[inTrain,]
-testing <- dat[-inTrain,]
+validating <- dat[-inTrain,]
+inTrain <-  createDataPartition(training$classe, p = 0.75)[[1]]
+testing <- training[-inTrain,]
+training <- training[inTrain,]
 ```
 
+
+## Preprocessing
+We use the `prePressing` function in `caret` package to center and scale our data, and perform impute using `knn` to remove the NAs.
 ```{r preprocessing}
-preObj <- preProcess(training[features], method = c("center", "scale","knnImpute"))
+preObj <- preProcess(training[-153], method = c("center", "scale","knnImpute"))
+trainp <- predict(preObj, training)
+testingp <- predict(preObj, testing)
 ```
+
+
+## Training different machine learning methods
+Here we use a few different methods to train our model. To enhance performance, we use repeated cross validation with 5 folds and 3 repeats for each methods. Note that to ensure reprehensibility, we set the random seed just prior to the training process. 
+
+* Generalized Boosted Regression Models
+```{r gbm.train}
+train_control <- trainControl(method="repeatedcv", number = 5, repeats= 3)
+set.seed(1237)
+mdl1 <- train(classe~., trainp, trControl=train_control, method = "gbm", verbose = FALSE)
+```
+
+```{r gbm validation}
+pred1 <- predict(mdl1, testingp)
+confusionMatrix(pred1, testing$classe)
+```
+
+
+* AdaBag
+```{r adaBag }
+set.seed(5289)
+mdl2 <- train(classe~., trainp, trControl=train_control, method = "AdaBag", verbose = FALSE)
+pred2 <- predict(mdl2, testingp)
+confusionMatrix(pred2, testing$classe)
+```
+The adabag seem to perform pooly in this configuration. This is likely due to poor parameter choices or overfitting the training data. We could improve this by running more cross-validation. However, that would take a lot of computation time. Since we have other models with great performance and we use model stacking to form the final model, this would not be a big problem.
+
+* Random Forest
+```{r rf}
+set.seed(5420)
+mdl3 <- train(classe~., trainp, trControl=train_control, method = "rf", verbose = FALSE)
+pred3 <- predict(mdl3, testingp)
+confusionMatrix(pred3, testing$classe)
+```
+
+  
+## Stacking models and combining predictors
+Previous results show that the `gdm` and `rf` methods give very accurate results, while the prediction from `AdaBag` is not as satisfactory. We use a RandomForest to combine the predictors and form our final model.
+```{r vote}
+votes <- data.frame(pred1, pred2, pred3, y = testing$classe)
+mdl4 <- train(y~., votes, method = "rf")
+```
+
+## Out-of-sample error
+Here We use the validation set to estimate the out-of-sample error for the final model.
+```{r estimate.error}
+v <- predict(preObj, validating)
+p1 <- predict(mdl1, v)
+p2 <- predict(mdl2, v)
+p3 <- predict(mdl3, v)
+p <- predict(mdl4,data.frame(pred1 = p1, pred2 = p2,pred3 = p3))
+confusionMatrix(p, validating$classe)
+```
+
+The overall accuracy is 99.2%. 
+
+## Conclusion
+
+In this work, we studied the HAR data and make predictions on the quality of personal activities. We split the data by 60%/20%/20% for training, testing and validation, and trained three models. We then stack the models and form a final prediction model. We tested the final model with the validation data and find that the overall accuracy is 99.2%. 
+
 
 
